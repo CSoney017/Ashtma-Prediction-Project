@@ -1,0 +1,627 @@
+---
+title: "Project 2 Report"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+### Group Members (names and EIDs): 
+Marta Maia | mcm5563
+Carel Soney | cs63674
+
+## Introduction
+
+For our project, we had to build various predictive models to predict an outcome called “value” in our dataset, which is the average PM2.5 concentration at a monitor. This is used to measure concentrations of ambient air pollution in the United States. The models we chose were linear regression, KNN, decision tree, and random forest. 
+
+For our first step, we created a testing and training dataset based on the original data we received. The testing data uses 75% of the original dataset, and training implements the other 25%. Because these datasets are randomized at each trial, the error will differ. Our preferred method of measuring error, the RMSE scores, measure the average distance between predicted and actual values, also known as the standard deviation of the residuals. The best model would have the lowest RMSE score, thereby the lowest error.
+
+The linear regression, the simplest of all regression models, assumes a linear fit to the dataset. While this may not be applicable for all datasets, the model assumes that all residuals are independent of each other. In regards to the chosen dataset for this project, we expected an RMSE score very close to 0, assuming that the dataset follows a linear trend. However, as we will discuss later in the project, we were surprised to find that this is not the case. 
+
+The KNN model, or K-Nearest Neighbors, predicts new variables based on distance to stored instances. This is where the distance of a new point is calculated to the existing points in the dataset. 
+
+Decision trees help predict a continuous outcome based on predictor variables. The data is split into subsets according to a decision rule and then tests the tree structure, from a root to a leaf node, in order to predict a new data point. 
+
+The forest tree model uses a collection of decision trees where each tree is built using a subset of the training data and a random selection of features leading to better generalization. This makes the model less likely to be subject to overfitting errors. 
+
+For each of the models specified above, we used different predictors in order to accurately measure the impact of the addition of certain variables on each model. 
+
+In this project, we used the following variables: 
+CMAQ - estimated values of air pollution from a model
+AOD - Aerosol Optical Depth measurement from a NASA satellite to calculate pollution near surface – Data from NASA
+Somecollege - percentage of people in zcta area where the monitor whose highest formal educational attainment was completing some college
+hs_orless - percentage of people in zcta area where the monitor whose highest formal educational attainment was a high school degree or less
+State - state where the monitor is located
+County_pop - population of the county of the monitor
+Zcta - location of the monitor 
+
+For KNN, we chose CMAQ and ‘zcta’ as our predictors. CMAQ was chosen because it was noted as a significant predictor variable in the project description, and we have also coded using ‘zcta’ in past labs. These seem to be very useful predictors for ‘value’ because they include location and an estimation for air pollution which is important for further estimating the true value of PM2.5.
+
+The linear regression model predicts the ‘value’ based on ‘CMAQ’, ‘aod’, and ‘hs_orless’. Because both CMAQ and aod are significant predictors, the implementation of both these variables in the model should create a highly accurate performance.
+
+For the decision tree, we chose ‘state’ and ‘county_pop’  as our predictor variables. This was done to analyze the effect of the location on the monitor to the value of PM2.5, such as knowing if geographic and population location play a role in levels of ambient air pollution.
+
+Lastly, in the forest tree model, we used only two predictors: aod and somecollege. While `aod` is a very important variable, somecollege is not as significant. Thus, using a mixture of these two to predict value makes for an interesting comparison. 
+
+For each model, we decided to use a scatter plot to visualize the actual versus predicted values to learn about the relationships in the data. Scatter plots seemed to be the best option because they show individual data points while also giving insight to the overall trend of actual versus predicted.
+
+We predicted that with more direct predictors, such as CMAQ and AOD, there would be a lower RMSE score and thus a better model for predicting. Based on the variables for each of the models, we hypothesized that linear regression would be the best and final model since it is directly related to both CMAQ and AOD.
+
+
+## Data Wrangling
+
+Below is our code for all 4 models. We have included the appropriate comments for users to follow along easily. Please note that due to the page limit constraint, we modified the size of all graphs to be smaller than the default size. Additionally, we limited the number of outputs in order to remain below 20 pages. 
+
+```{r, warning = FALSE, message = FALSE}
+
+### GLOBAL VARIABLES  
+
+library(tidyverse)
+library(tidymodels)
+library(kknn)
+library(dplyr)
+library(ggplot2)
+library(tune)
+library(rpart)
+library(rpart.plot)
+library(randomForest)
+library(ranger)
+
+
+dat <- read_csv("pm25_data.csv.gz")
+
+dat_split <- initial_split(dat)
+dat_train <- training(dat_split)
+dat_test <- testing(dat_split)
+
+set.seed(123)
+```
+
+
+```{r, warning = FALSE}
+
+### LINEAR REGRESSION 
+
+# creating the recipe 
+rec <- dat_train |>
+    recipe(value ~ CMAQ + aod + hs_orless)
+
+#creating the model 
+model <- linear_reg() |> 
+    set_engine("lm") |> 
+    set_mode("regression")
+
+# creating the workflow 
+wf <- workflow() |> 
+    add_recipe(rec) |> 
+    add_model(model)
+
+# Creating 10-folds for cross validation
+folds <- vfold_cv(dat_train, v = 10)
+
+
+res <- wf |> 
+    fit_resamples(resamples = folds) # essentially fits the model 10 times 
+```
+
+
+```{r, warning = FALSE, fig.width = 2, fig.height = 2}
+# fitting the data to the training dataset
+
+fit <- wf |> 
+    fit(data = dat_train)
+
+fit |> 
+    extract_fit_parsnip() |> 
+    augment(dat_train) |> 
+    ggplot(aes(.pred, value)) + 
+    geom_point() +
+    geom_abline(intercept = 0, slope = 1)
+
+final <- wf |> 
+    last_fit(split = dat_split)
+
+## scatterplot of observed vs. predicted
+final |> 
+    extract_fit_parsnip() |> 
+    augment(dat_test) |> 
+    ggplot(aes(.pred, value)) + 
+    geom_point() +
+    # might need to change the slope 
+    geom_abline(intercept = 0, slope = 1)
+
+```
+
+```{r, warning = FALSE, fig.width = 2, fig.height = 2}
+## Tuning linear regression
+rec <- dat_train |> 
+    recipe(value ~ aod + CMAQ + hs_orless) |> 
+    step_normalize(starts_with("pixel")) 
+
+model <- linear_reg() |> 
+    set_engine("lm") |> 
+    set_mode("regression")
+
+wf <- workflow() |> 
+    add_recipe(rec) |> 
+    add_model(model)
+
+# Creating 10-folds for cross validation
+folds <- vfold_cv(dat_train, v = 10)
+
+res <- fit_resamples(wf, resamples = folds)
+
+## Try a grid of tuning parameters
+model <- linear_reg() |> 
+    set_engine("lm") |> 
+    set_mode("regression")
+
+# creating the workflow again 
+wf <- workflow() |> 
+    add_recipe(rec) |> 
+    add_model(model)
+
+## Fit model over grid of tuning parameters
+res <- tune_grid(wf, resamples = folds, 
+                 grid = expand.grid(mtry = c(1, 2, 5),
+                                    min_n = c(3, 5)))
+# showing the best rmse score first 
+# listing rmse scores from least to greatest 
+res |> 
+    show_best(metric = "rmse") |> 
+  head(n = 3)
+
+## Fit the best model obtained from tuning
+model <- linear_reg() |> 
+    set_engine("lm") |> 
+    set_mode("regression")
+
+# creating a workflow 
+wf <- workflow() |> 
+    add_recipe(rec) |> 
+    add_model(model)
+
+## Fit final model to entire training set; evaluate on test set
+final <- wf |> 
+    last_fit(split = dat_split)
+
+# collecting metrics after fitting model 
+LM_rmse <- final |> 
+    collect_metrics()
+
+LM_rmse <- LM_rmse$.estimate[1]
+
+## Plot the observed PM2.5 values vs. model predictions
+final |> 
+    collect_predictions() |> 
+    ggplot(aes(.pred, value)) +
+    geom_point() + 
+    geom_abline(intercept = 0, slope = 1)
+```
+
+
+
+
+```{r, warning = FALSE, fig.width = 2, fig.height = 2}
+### KNN MODEL
+
+# splitting up the data into training and testing with 75% proportion
+dat_split <- initial_split(dat, prop = 0.75)  
+train <- training(dat_split)
+test <- testing(dat_split)
+
+# Here, we define the recipe using the training data set and having value be based on CMAQ and zcta
+rec <- recipe(value ~ CMAQ + zcta, data = train)
+
+# Now we define the knn model (regression mode) and have a standard value of neighbors = 5
+model <- nearest_neighbor(neighbors = 5) |> 
+  set_engine("kknn") |> 
+  set_mode("regression")
+
+# We create the workflow with our defined recipe and model
+wf <- workflow() |> 
+  add_recipe(rec) |> 
+  add_model(model)
+
+# Here, we fit the model on the training data with the workflow
+fitted_model <- wf |> 
+  fit(data = train)
+
+# Now we predict on the test dataset using the fitted model, and bind the test columns
+test_predictions <- predict(fitted_model, new_data = test, type = "numeric") |> 
+  bind_cols(test)
+
+# Then, we calculate RMSE by creating the residuals and then taking the square root of the mean of the residuals squared
+test_results <- test_predictions |> 
+  mutate(residuals = value - .pred) |> 
+  summarise(RMSE = sqrt(mean(residuals^2)))
+
+```
+
+```{r, warning = FALSE, fig.width = 2, fig.height = 2}
+### KNN MODEL CONTINUED
+
+# We made the actual vs predicted plot on the predictions using ggplot and geom_point for a scatterplot
+test_predictions |> 
+  ggplot(aes(x = value, y = .pred)) +
+  geom_point(alpha = 0.5) +
+  geom_smooth(method = "lm", color = "blue") +
+  labs(x = "Actual values", y = "Predicted values", title = "Actual vs Predicted Plot") +
+  theme_minimal()
+
+# Now, we use the tune() function to find the optimal number of neighbors for our dataset
+model <- nearest_neighbor(neighbors = tune()) |> 
+  set_engine("kknn") |> 
+  set_mode("regression")
+
+# Now, we redefine the workflow with our new model
+tuning_wf <- workflow() |> 
+  add_recipe(rec) |> 
+  add_model(model)
+
+# Here, we are setting up a tuning grid
+k_grid <- tibble(neighbors = seq(1, 20, by = 1))
+
+# Next, we set up cross-validation using cv_folds
+cv_folds <- vfold_cv(train, v = 5)
+
+# We tune the model and define our metrics to be based on RMSE
+tuning_results <- tune_grid(
+  tuning_wf,
+  resamples = cv_folds,
+  grid = k_grid,
+  metrics = metric_set(rmse)
+)
+
+# Next, we get the best k by arranging in terms of lowest RMSE, which is our measurement for high accuracy
+best_k <- tuning_results |> 
+  collect_metrics() |> 
+  filter(.metric == "rmse") |> 
+  arrange(mean) |> 
+  slice(1) |> 
+  pull(neighbors)
+
+# Update model specification with optimal number of neighbors
+optimal_model <- nearest_neighbor(neighbors = best_k) |>   # changed to 6 here
+  set_engine("kknn") |> 
+  set_mode("regression")
+
+# Update workflow
+optimal_wf <- workflow() |> 
+  add_recipe(rec) |> 
+  add_model(optimal_model)
+
+# Fit the optimal model on the training data
+optimal_fit <- optimal_wf |> 
+  fit(data = train)
+
+# Predict on the test data and calculate RMSE
+optimal_predictions <- predict(optimal_fit, new_data = test, type = "numeric") |> 
+  bind_cols(test)
+
+# Calculate RMSE
+optimal_results_KNN <- optimal_predictions |> 
+  mutate(residuals = value - .pred) |> 
+  summarize(RMSE = sqrt(mean(residuals^2)))
+
+KNN_rmse <- as.numeric(optimal_results_KNN) # saving this as a numerica value to use in table later
+
+```
+
+
+```{r, warning = FALSE, fig.width = 2, fig.height = 2}
+
+### DECISION TREE MODEL
+
+# Splitting the data
+set.seed(123)  # for reproducibility
+dat_split <- initial_split(dat, prop = 0.75)
+train <- training(dat_split)
+test <- testing(dat_split)
+
+# Define the recipe
+rec <- recipe(value ~ state + county_pop, data = train)
+
+# Define the model
+model <- decision_tree() |> 
+  set_engine("rpart") |>  
+  set_mode("regression")
+
+# Create the workflow
+wf <- workflow() |> 
+  add_recipe(rec) |> 
+  add_model(model)
+
+# Fit the model on the training data
+fitted_model <- wf |> 
+  fit(data = train)
+
+# Predict on the test data
+test_predictions <- predict(fitted_model, new_data = test, type = "numeric") %>%
+  bind_cols(test)
+
+# Calculate RMSE
+test_results <- test_predictions |> 
+  mutate(residuals = value - .pred) |> 
+  summarise(RMSE = sqrt(mean(residuals^2)))
+
+# This code below was created to answer the first primary questions to see geographic location for where predictions are the best and where predictions are the worst
+
+test_predictions <- predict(fitted_model, new_data = test, type = "numeric") |> 
+  bind_cols(test) |> 
+  mutate(residual = value - .pred)
+
+test_predictions_best_and_worst <- test_predictions |> 
+  mutate(difference_bw_pred_and_value = abs(.pred - value)) |> 
+  arrange(desc(difference_bw_pred_and_value))
+
+test_predictions_best_and_worst |> 
+  select(difference_bw_pred_and_value, .pred, value, state, county_pop) |> 
+  arrange((difference_bw_pred_and_value)) |> 
+  head(n = 5)
+
+test_predictions_best_and_worst |> 
+  select(difference_bw_pred_and_value, .pred, value, state, county_pop) |> 
+  arrange(desc(difference_bw_pred_and_value)) |> 
+  head(n = 5)
+
+# Plotting actual vs. predicted values
+ggplot(test_predictions, aes(x = value, y = .pred)) +
+  geom_point(aes(color = residual), alpha = 0.6) +
+  geom_smooth(method = "lm", se = FALSE, color = "blue") +
+  labs(x = "Actual Values", y = "Predicted Values", title = "Actual vs Predicted Values") +
+  theme_minimal()
+
+```
+
+```{r, warning = FALSE, fig.width = 2, fig.height = 2}
+### DECISION TREE MODEL CONTINUED
+
+# Model Decision trees with tunable parameter
+model <- decision_tree(cost_complexity = tune()) |> 
+  set_engine("rpart") |> 
+  set_mode("regression")
+
+# Setup a tuning grid
+cp_grid <- tibble(cost_complexity = seq(0.001, 0.1, length.out = 10))
+
+# Setup cross-validation
+cv_folds <- vfold_cv(train, v = 5)
+
+# Tune the model
+tuning_wf <- workflow() |> 
+  add_recipe(rec) |> 
+  add_model(model)
+
+tuning_results <- tune_grid(
+  tuning_wf,
+  resamples = cv_folds,
+  grid = cp_grid,
+  metrics = metric_set(rmse)
+)
+
+# Select the best CP
+best_cp <- tuning_results |> 
+  collect_metrics() |> 
+  filter(.metric == "rmse") |> 
+  arrange(mean) |> 
+  slice(1) |> 
+  pull(cost_complexity)
+
+# Re-fit the model using the best cp
+model <- decision_tree(cost_complexity = best_cp) |> 
+  set_engine("rpart") |> 
+  set_mode("regression")
+
+# Re-create and re-fit the workflow
+optimized_wf <- workflow() |> 
+  add_recipe(rec) |> 
+  add_model(model) |> 
+  fit(data = train)
+
+# Predict and evaluate again on the test data as above
+# Predict using the optimized model on the test data
+optimized_predictions <- predict(optimized_wf, new_data = test, type = "numeric") |> 
+  bind_cols(test)  # Combine predictions with actual test data
+
+# Calculate residuals and RMSE
+optimized_results_DT <- optimized_predictions |> 
+  mutate(residuals = value - .pred) |> 
+  summarise(RMSE = sqrt(mean(residuals^2)))  # Calculate the RMSE
+
+# saving as a numeric value to use in table later 
+DT_rmse <- as.numeric(optimized_results_DT)
+
+```
+
+```{r, warning = FALSE, fig.width = 2, fig.height = 2}
+### FOREST TREE 
+
+### NOTE: make sure all relevant packages are selected 
+
+# setting seed for reproducibility 
+set.seed(322)
+
+# splitting the dataset specifically for forest tree model 
+tree_split <- initial_split(dat)
+train <- training(tree_split)
+test <- testing(tree_split)
+
+# creating the recipe from the forest tree training dataset
+rec <- train |> 
+  recipe(value ~ aod + somecollege)
+
+# creating model 
+model <- rand_forest(trees = 50) |> 
+  set_engine("randomForest") |> # setting engine to random forest
+  set_mode("regression") # mode = regression 
+
+tree_wf <- workflow() |> 
+  add_recipe(rec) |> 
+  add_model(model) 
+
+# creating 10 folds for cross-validation
+folds <- vfold_cv(dat, v = 10)
+
+res <- fit_resamples(tree_wf, resamples = folds)
+
+dat_tree <- fit(tree_wf, data = dat)
+
+tree_predictions <- predict(dat_tree, new_data = dat)
+
+
+```
+
+```{r, warning = FALSE, fig.width = 2, fig.height = 2}
+# fitting the tree 
+
+fit <- tree_wf |> 
+    fit(data = dat_train)
+
+#creating another scatterplot 
+fit |> 
+    extract_fit_parsnip() |> 
+    augment(dat_train) |> 
+    ggplot(aes(.pred, value)) + 
+    geom_point() +
+    geom_abline(intercept = 0, slope = 1)
+
+final <- tree_wf |> 
+    last_fit(split = tree_split)
+
+## Plot observed vs. predicted
+final |> 
+    extract_fit_parsnip() |> 
+    augment(dat_test) |> 
+    ggplot(aes(.pred, value)) + 
+    geom_point() +
+    # might need to change the slope 
+    geom_abline(intercept = 0, slope = 1)
+```
+
+
+```{r, warning = FALSE, fig.width = 2, fig.height = 2, message = FALSE}
+
+## Try random forest instead
+rec <- train |> 
+    recipe(value ~ aod + somecollege) |> # creating recipe with the selected predictors 
+    step_normalize(starts_with("pixel")) 
+
+model <- rand_forest(mtry = 5) |> 
+    set_engine("ranger") |> 
+    set_mode("regression")
+
+wf <- workflow() |> 
+    add_recipe(rec) |> 
+    add_model(model)
+
+# creating 10 folds for cross-validation
+folds <- vfold_cv(dat_train, v = 10)
+
+res <- fit_resamples(wf, resamples = folds)
+
+## Try a grid of tuning parameters
+model <- rand_forest(mtry = tune("mtry"),
+                     min_n = tune("min_n")) |> 
+    set_engine("ranger") |> 
+    set_mode("regression")
+
+wf <- workflow() |> 
+    add_recipe(rec) |> 
+    add_model(model)
+
+## Fit model over grid of tuning parameters
+res <- tune_grid(wf, resamples = folds, 
+                 grid = expand.grid(mtry = c(1, 2, 5),
+                                    min_n = c(3, 5)))
+res |> 
+    show_best(metric = "rmse") |> 
+  head(n = 3)
+
+```
+
+```{r, warning = FALSE, fig.width = 2, fig.height = 2}
+
+## Fit the best model obtained from tuning
+model <- rand_forest(mtry = 2,
+                     min_n = 3) |> 
+    set_engine("ranger") |> 
+    set_mode("regression")
+
+wf <- workflow() |> 
+    add_recipe(rec) |> 
+    add_model(model)
+
+## Fit final model to entire training set; evaluate on test set
+final <- wf |> 
+    last_fit(split = dat_split)
+
+FT_rmse <- final |> 
+    collect_metrics()
+
+FT_rmse <- FT_rmse$.estimate[1]
+
+## Plot the observed PM2.5 values vs. model predictions
+final |> 
+    collect_predictions() |> 
+    ggplot(aes(.pred, value)) +
+    geom_point() + 
+    geom_abline(intercept = 0, slope = 1)
+```
+
+```{r}
+# table for RMSE scores. We created a data frame of the RMSE scores and plugged in the values after running the whole code
+RMSE_table <- data.frame(
+  Model = c("Linear Regression", "KNN", "Decision Tree", "Random Forest"), 
+  RMSE = c(LM_rmse, KNN_rmse, DT_rmse, FT_rmse)
+)
+print(RMSE_table)
+
+```
+
+## Results
+  As previously mentioned, for each model, we split up the dataset into training and testing with a default proportion of 75% and 25% respectively. For each of the four models, we developed it based on the lecture notes. 
+  
+  For the first model, KNN, we created a recipe where the value would be based on CMAQ and zcta using the training dataset. The model was created using nearest neighbors set to 5 initially, and we specified the engine to be “kknn” and the mode to be “regression”. We then created the workflow by using the created recipe and model. Finally, we fit the model using the training data. For the last step, we predicted the test dataset with the fitted model and then calculated the RMSE. Then, we created a ggplot of a scatterplot for predicted versus actual values. 
+  
+  Next, we tuned our parameters in the KNN model, redefined the workflow, and set up the tuning grid. We then created cross validation in order to tune the results and get the best number of neighbors, which we found to be around 5. Rerunning our code with neighbors equal to the tuned parameter output, we were able to fit the optimal model on the training data, predict on the test data, and get the lowest RMSE score. We found RMSE by taking the square root of the mean of the residuals. Note that the RMSE score is just under 2, which is still not ideal but is not a terrible fit.
+  
+With the linear regression model, we had a similar process to that of KNN except we specified the engine to be “lm” and kept the mode as “regression”. We created the recipe, the workflow, and the model like before, based on the lecture notes, and then fit the model using the training data. Next, we used the predict() function for the testing dataset and calculated the RMSE value for that model using the collect_metrics() function. We went on to create a scatterplot of the actual values vs the predicted values with data taken from the predict() function. While the RMSE scores vary for each run due to the randomized testing and training datasets, the average of 10 trials was 2.15. 
+	
+Following similarly to the other creation of models, in the decision tree model, we defined the recipe, with ‘value’ based on state and county population from the training dataset. The model was a decision tree with regression as the mode. Then, we created the workflow and fit the model on the training data and predicted on the test data. We also calculated RMSE using math, similar to the KNN model.
+
+  Next, we created a scatter plot from ggplot that plotted the actual versus predicted values. In order to tune our decision tree model, we used the tune() function and set up cross validation with ‘cv folds’ where we used the workflow and the results to get the best parameter which was 0.023. We re-ran the code with the best tuned parameter and calculated the residuals for the RMSE score which we also found to be less than 2. In order to answer the first primary question, we also found the best and worst locations for predictions by finding the error (absolute value of predicted value minus the true value) and arranging in either descending or ascending order. Lastly, with the forest tree model, we created the workflow, edited the engine to “randomForest” and fit the model on the training dataset. Next, we created the scatterplot after fitting the models to the testing dataset using the predict() function. After running the model a total of 10 times, we calculated the average RMSE score to be 2.44, which is much higher compared to the other models. For each of the models, we tuned the parameters to accommodate a better fit. However, due to the randomized testing and training datasets, the final RMSE score may be higher than the original error value. This is in part due to the independence of the test set with respect to the training set. 
+	
+At the end of the code, we created a table of the models and their respective RMSE values. After running the code multiple times, we saw that KNN and Decision Tree consistently produced the lowest RMSE values, meaning that the model produced higher accuracy. On the other hand, the Random Forest model had the worst performance, which is indicated by its higher RMSE score compared to the other models in the table. While the RMSE scores were higher than expected, there are no universal good or bad values. However, for the purpose of this project, the best model will be either KNN or Decision Tree due to its low RMSE score. 
+
+## Primary Questions
+
+1. From our models, our decision tree model primarily focused on location of the monitor. Based on the test_predictions dataset from the decision tree model, California, with a county population of 839,631, gave a prediction that was furthest from the true value. On the other hand, Kentucky, with a county population of 23,842, had a prediction that was closest to the true value. This prediction seems to correlate with county population. A smaller county population implies a better prediction. This could be a potential hypothesis for the contrasting performances with California and Kentucky. 
+
+2. In the dataset, there seems to be better predictions near major cities. Some variables that could be included would be more about symptoms of the population, such as respiratory diseases for a region. There could also be another variable about the density of the city, which could show further insights for each individual city. We can also include other features, such as whether the city were more residential or had more focus on industrial and manufacturing.
+
+3. The linear regression model implemented both the CMAQ and AOD variables along with another predictor, hs_orless, to predict ‘value’. While we expected the RMSE score to be quite small, we consistently received a number around 2.15. While this is higher than expected, the RMSE score is low enough to indicate that it is not a terrible model. 
+
+  Comparing KNN and decision tree, the model that performed better also had CMAQ as a predictor variable for “value.” Thus, we concluded that the inclusion of CMAQ as a predictor for “value” would lead to higher accuracy. The decision tree, which did not include CMAQ or AOD, had a relatively high RMSE score compared to the other three models and therefore had a worse performance. Similarly, the forest tree model only included the aod variable, and we received an average RMSE score of 2.44, much higher than the linear regression model. Thus, we can infer that the strongest models were KNN and linear regression which included both the CMAQ and aod predictor. 
+  
+4. With Hawaii, we believe that because of the size of the state and levels of population, the state could perform well. This could also be because Hawaii is known for being environmentally focused and more significant factors could influence levels of air pollution. However, with Hawaii being a popular tourist location, it may be hard to calculate an exact population number. It is also possible that air pollution varies in relation to geographic location. Similarly, Alaska could also perform well given that the population in Alaska is low. Still, the monitor locations, such as in a city or in more of the rural areas, could negatively impact performance of the models we used. 
+
+## Discussion
+
+  Some supporting statistics and visualizations were the actual versus predicted scatterplots. These were useful in determining the model with the highest accuracy. This project was challenging, as it was focused on content from the final parts of the semester, and it was focused on introductory machine learning topics. A few pieces of information, such as the cv_folds function and workflow creation, had to be revisited from lecture notes. We originally thought that our models would have very good performance, with our RMSE scores being close to 0, but we found that for the most part, our RMSE scores on the models were higher than expected with only a few models dropping below 2. This could be due to the fact that we were using inefficient models that might not have been the best design for predictions compared to our data. Additionally, the selected models may not have been the best fit for the dataset. 
+  
+  Another situation we encountered was putting our codes together and having different training and testing sets. Since these training and testing datasets are randomized, we figured that, as thought different for each trial, it would not make a significant impact. This issue highlights the differences in each person’s programming style, a consistent issue even in the workforce.
+  
+  Finally, there was some difficulty in calculating RMSE. While in some models, noticeably the linear regression and forest trees model, we were able to automatically calculate the error using the collect_metrics() function, the other two were not giving the same output. Instead, we calculated and printed out the RMSE manually. 
+  
+  From this project, we learned that models are diversified to better predict specific types of datasets. The lecture recordings and in-class practice codes, along with past labs and homeworks, were very useful in completing this project. We also used a tuning grid and used the lecture 25 code and the  following link for additional help: https://tune.tidymodels.org/reference/tune_grid.html.
+  
+For the decision tree model, we wanted to tune the parameters and looked to the online textbook to help us with this. Additionally, the link for where we about cost_complexity and cp, which we used in our code, is: https://cran.r-project.org/web/packages/dials/vignettes/dials.html
+
+## Acknowledgements: 
+Marta Maia - Programmed KNN and decision tree models and completed the report for those respective sections.
+
+Carel Soney - Completed linear regression and forest tree models and wrote the report for those respective sections.
+
+Both members equally contributed to the introduction, results, and discussion of the report. 

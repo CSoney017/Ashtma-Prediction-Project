@@ -1,0 +1,193 @@
+---
+title: "Project 2 Report"
+output: html_document
+---
+
+```{r setup, include=FALSE, warning = FALSE}
+#knitr::opts_chunk$set(echo = TRUE)
+```
+
+### Group Members (names and EIDs):
+
+Carel Soney | cs63674
+Marta Maia | mcm5563
+
+
+## Introduction
+
+**test geographic locations, make a graph for each model and select best 2, want a low RMSE score**
+
+1. Marta: knn - none
+ - state, county_pop
+ 
+2. Carel: linear regression - both + 1 predictor 
+ - hs_orless 
+ 
+3. Marta: logistic regression - cmaq (2) 
+ - state, zcta
+
+4. Carel: forest tree - aod (2/3)
+ - somecollege 
+
+```{r, warning = FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+### GLOBAL VARIABLES  
+
+library(tidyverse)
+library(tidymodels)
+
+dat <- read_csv("pm25_data.csv.gz")
+
+dat_split <- initial_split(dat)
+dat_train <- training(dat_split)
+dat_test <- testing(dat_split)
+
+set.seed(123)
+
+```
+
+Not everything is fun - this must be deleted - this is incomplete 
+
+```{r, warning = FALSE}
+
+### LINEAR REGRESSION 
+
+rec <- dat_train |>
+    recipe(value ~ CMAQ + aod + hs_orless)
+
+model <- linear_reg() |> 
+    set_engine("lm") |> 
+    set_mode("regression")
+
+wf <- workflow() |> 
+    add_recipe(rec) |> 
+    add_model(model)
+
+folds <- vfold_cv(dat_train, v = 10)
+
+res <- wf |> 
+    fit_resamples(resamples = folds) # essentially fits the model 10 times 
+
+res |> 
+    collect_metrics()
+#rmse = 2.2242
+
+```
+
+```{r, warning = FALSE}
+### fitting the data 
+
+fit <- wf |> 
+    fit(data = dat_train)
+
+fit |> 
+    extract_fit_parsnip() |> 
+    augment(dat_train) |> 
+    ggplot(aes(.pred, value)) + 
+    geom_point() +
+    geom_abline(intercept = 0, slope = 1)
+
+final <- wf |> 
+    last_fit(split = dat_split)
+final |> 
+    collect_metrics()
+# rmse = 2.1404
+
+## Plot observed vs. predicted
+final |> 
+    extract_fit_parsnip() |> 
+    augment(dat_test) |> 
+    ggplot(aes(.pred, value)) + 
+    geom_point() +
+    # might need to change the slope 
+    geom_abline(intercept = 0, slope = 1)
+
+
+
+```
+
+Not everything is fun - this must be deleted 
+
+
+## Forest Tree Model 
+```{r}
+
+### FOREST TREE 
+
+set.seed(322)
+
+tree_split <- initial_split(dat)
+train <- training(tree_split)
+test <- testing(tree_split)
+
+rec <- train |> 
+  recipe(value ~ aod + somecollege)
+
+model <- rand_forest(trees = 50) |> 
+  set_engine("randomForest") |> 
+  set_mode("regression")
+
+tree_wf <- workflow() |> 
+  add_recipe(rec) |> 
+  add_model(model) 
+ # fit(data = train)
+
+folds <- vfold_cv(dat, v = 10)
+
+res <- fit_resamples(tree_wf, resamples = folds)
+
+res |> 
+  collect_metrics() 
+# rmse = 2.449
+
+dat_tree <- fit(tree_wf, data = dat)
+
+tree_predictions <- predict(dat_tree, new_data = dat)
+```
+
+```{r, warning = FALSE}
+
+# fitting the tree 
+
+fit <- tree_wf |> 
+    fit(data = dat_train)
+
+fit |> 
+    extract_fit_parsnip() |> 
+    augment(dat_train) |> 
+    ggplot(aes(.pred, value)) + 
+    geom_point() +
+    geom_abline(intercept = 0, slope = 1)
+
+final <- tree_wf |> 
+    last_fit(split = tree_split)
+
+final |> 
+    collect_metrics()
+# rmse = 2.795
+
+## Plot observed vs. predicted
+final |> 
+    extract_fit_parsnip() |> 
+    augment(dat_test) |> 
+    ggplot(aes(.pred, value)) + 
+    geom_point() +
+    # might need to change the slope 
+    geom_abline(intercept = 0, slope = 1)
+
+```
+
+
+## Data Wrangling
+
+
+
+
+## Results
+
+
+
+
+
+## Discussion
